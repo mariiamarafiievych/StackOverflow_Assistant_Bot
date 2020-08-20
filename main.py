@@ -1,390 +1,115 @@
-
 import sys
+
 sys.path.append("..")
-from common.download_utils import download_week3_resources
-download_week3_resources()
-import gensim
-from grader import Grader
-grader = Grader()
-from gensim.models.keyedvectors import KeyedVectors
+from common.download_utils import download_project_resources
 
-wv_embeddings = KeyedVectors.load_word2vec_format('GoogleNews-vectors-negative300.bin',binary=True)
-
-
-def check_embeddings(embeddings):
-    error_text = "Something wrong with your embeddings ('%s test isn't correct)."
-    most_similar = embeddings.most_similar(positive=['woman', 'king'], negative=['man'])
-    if len(most_similar) < 1 or most_similar[0][0] != 'queen':
-        return error_text % "Most similar"
-
-    doesnt_match = embeddings.doesnt_match(['breakfast', 'cereal', 'dinner', 'lunch'])
-    if doesnt_match != 'cereal':
-        return error_text % "Doesn't match"
-
-    most_similar_to_given = embeddings.most_similar_to_given('music', ['water', 'sound', 'backpack', 'mouse'])
-    if most_similar_to_given != 'sound':
-        return error_text % "Most similar to given"
-
-    return "These embeddings look good."
-
-
-print(check_embeddings(wv_embeddings))
+download_project_resources()
+from utils import *
 
 import numpy as np
+import pandas as pd
+import pickle
+import re
 
-def question_to_vec(question, embeddings, dim=300):
-    """
-        question: a string
-        embeddings: dict where the key is a word and a value is its' embedding
-        dim: size of the representation
-
-        result: vector representation for the question
-    """
-    words_embedding = [embeddings[word] for word in question.split() if word in embeddings]
-    if not words_embedding:
-        return np.zeros(dim)
-    words_embedding = np.array(words_embedding)
-    return words_embedding.mean(axis=0)
-
-def question_to_vec_tests():
-    if (np.zeros(300) != question_to_vec('', wv_embeddings)).any():
-        return "You need to return zero vector for empty question."
-    if (np.zeros(300) != question_to_vec('thereisnosuchword', wv_embeddings)).any():
-        return "You need to return zero vector for the question, which consists only unknown words."
-    if (wv_embeddings['word'] != question_to_vec('word', wv_embeddings)).any():
-        return "You need to check the corectness of your function."
-    if ((wv_embeddings['I'] + wv_embeddings['am']) / 2 != question_to_vec('I am', wv_embeddings)).any():
-        return "Your function should calculate a mean of word vectors."
-    if (wv_embeddings['word'] != question_to_vec('thereisnosuchword word', wv_embeddings)).any():
-        return "You should not consider words which embeddings are unknown."
-    return "Basic tests are passed."
-
-print(question_to_vec_tests())
-
+from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
-nltk.download('stopwords')
-from util import array_to_string
-
-question2vec_result = []
-for question in open('data/test_embeddings.tsv'):
-    question = question.strip()
-    answer = question_to_vec(question, wv_embeddings)
-    question2vec_result = np.append(question2vec_result, answer)
-
-grader.submit_tag('Question2Vec', array_to_string(question2vec_result))
-
-def hits_count(dup_ranks, k):
-    """
-        dup_ranks: list of duplicates' ranks; one rank per question;
-                   length is a number of questions which we are looking for duplicates;
-                   rank is a number from 1 to len(candidates of the question);
-                   e.g. [2, 3] means that the first duplicate has the rank 2, the second one — 3.
-        k: number of top-ranked elements (k in Hits@k metric)
-
-        result: return Hits@k value for current ranking
-    """
-    count = 0
-    for rank in dup_ranks:
-        if rank <= k:
-            count += 1
-    return count / (len(dup_ranks) + 1e-8)
 
 
-def test_hits():
-    # *Evaluation example*
-    # answers — dup_i
-    answers = ["How does the catch keyword determine the type of exception that was thrown"]
+def tfidf_features(X_train, X_test, vectorizer_path):
+    """Performs TF-IDF transformation and dumps the model."""
 
-    # candidates_ranking — the ranked sentences provided by our model
-    candidates_ranking = [["How Can I Make These Links Rotate in PHP",
-                           "How does the catch keyword determine the type of exception that was thrown",
-                           "NSLog array description not memory address",
-                           "PECL_HTTP not recognised php ubuntu"]]
-    # dup_ranks — position of the dup_i in the list of ranks +1
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
+    # Train a vectorizer on X_train data.
+    # Transform X_train and X_test data.
 
-    # correct_answers — the expected values of the result for each k from 1 to 4
-    correct_answers = [0, 1, 1, 1]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(hits_count(dup_ranks, k), correct):
-            return "Check the function."
+    # Pickle the trained vectorizer to 'vectorizer_path'
+    # Don't forget to open the file in writing bytes mode.
 
-    # Other tests
-    answers = ["How does the catch keyword determine the type of exception that was thrown",
-               "Convert Google results object (pure js) to Python object"]
+    tfidf_vectorizer = TfidfVectorizer(min_df=5, max_df=0.9, ngram_range=(1, 2), token_pattern=None,
+                                       tokenizer=nltk.tokenize.casual_tokenize)
+    tfidf_vectorizer.fit(np.concatenate((X_train, X_test)))
+    pickle.dump(tfidf_vectorizer, open(vectorizer_path, 'wb'))
+    X_train = tfidf_vectorizer.transform(X_train)
+    X_test = tfidf_vectorizer.transform(X_test)
 
-    # The first test: both duplicates on the first position in ranked list
-    candidates_ranking = [["How does the catch keyword determine the type of exception that was thrown",
-                           "How Can I Make These Links Rotate in PHP"],
-                          ["Convert Google results object (pure js) to Python object",
-                           "WPF- How to update the changes in list item of a list"]]
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
-    correct_answers = [1, 1]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(hits_count(dup_ranks, k), correct):
-            return "Check the function (test: both duplicates on the first position in ranked list)."
-
-    # The second test: one candidate on the first position, another — on the second
-    candidates_ranking = [["How Can I Make These Links Rotate in PHP",
-                           "How does the catch keyword determine the type of exception that was thrown"],
-                          ["Convert Google results object (pure js) to Python object",
-                           "WPF- How to update the changes in list item of a list"]]
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
-    correct_answers = [0.5, 1]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(hits_count(dup_ranks, k), correct):
-            return "Check the function (test: one candidate on the first position, another — on the second)."
-
-    # The third test: both candidates on the second position
-    candidates_ranking = [["How Can I Make These Links Rotate in PHP",
-                           "How does the catch keyword determine the type of exception that was thrown"],
-                          ["WPF- How to update the changes in list item of a list",
-                           "Convert Google results object (pure js) to Python object"]]
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
-    correct_answers = [0, 1]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(hits_count(dup_ranks, k), correct):
-            return "Check the function (test: both candidates on the second position)."
-
-    return "Basic test are passed."
-
-print(test_hits())
-
-def dcg_score(dup_ranks, k):
-    """
-        dup_ranks: list with ranks for each duplicate (the best rank is 1, the worst is len(dup_ranks))
-        k: number of top-ranked elements
-
-        result: float number
-    """
-    score = 0
-    for rank in dup_ranks:
-        if rank <= k:
-            score += 1/np.log2(1+rank)
-    return score/(len(dup_ranks)+1e-8)
+    return X_train, X_test
 
 
+sample_size = 200000
 
-def test_dcg():
-    # *Evaluation example*
-    # answers — dup_i
-    answers = ["How does the catch keyword determine the type of exception that was thrown"]
+dialogue_df = pd.read_csv('data/dialogues.tsv', sep='\t').sample(sample_size, random_state=0)
+stackoverflow_df = pd.read_csv('data/tagged_posts.tsv', sep='\t').sample(sample_size, random_state=0)
 
-    # candidates_ranking — the ranked sentences provided by our model
-    candidates_ranking = [["How Can I Make These Links Rotate in PHP",
-                           "How does the catch keyword determine the type of exception that was thrown",
-                           "NSLog array description not memory address",
-                           "PECL_HTTP not recognised php ubuntu"]]
-    # dup_ranks — position of the dup_i in the list of ranks +1
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
+dialogue_df.head()
+stackoverflow_df.head()
 
-    # correct_answers — the expected values of the result for each k from 1 to 4
-    correct_answers = [0, 1 / (np.log2(3)), 1 / (np.log2(3)), 1 / (np.log2(3))]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(dcg_score(dup_ranks, k), correct):
-            return "Check the function."
+from utils import text_prepare
 
-    # Other tests
-    answers = ["How does the catch keyword determine the type of exception that was thrown",
-               "Convert Google results object (pure js) to Python object"]
+dialogue_df['text'] = dialogue_df.text.map(text_prepare)
+stackoverflow_df['title'] = stackoverflow_df.title.map(text_prepare)
 
-    # The first test: both duplicates on the first position in ranked list
-    candidates_ranking = [["How does the catch keyword determine the type of exception that was thrown",
-                           "How Can I Make These Links Rotate in PHP"],
-                          ["Convert Google results object (pure js) to Python object",
-                           "WPF- How to update the changes in list item of a list"]]
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
-    correct_answers = [1, 1]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(dcg_score(dup_ranks, k), correct):
-            return "Check the function (test: both duplicates on the first position in ranked list)."
+from sklearn.model_selection import train_test_split
 
-    # The second test: one candidate on the first position, another — on the second
-    candidates_ranking = [["How Can I Make These Links Rotate in PHP",
-                           "How does the catch keyword determine the type of exception that was thrown"],
-                          ["Convert Google results object (pure js) to Python object",
-                           "WPF- How to update the changes in list item of a list"]]
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
-    correct_answers = [0.5, (1 + (1 / (np.log2(3)))) / 2]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(dcg_score(dup_ranks, k), correct):
-            return "Check the function (test: one candidate on the first position, another — on the second)."
+X = np.concatenate([dialogue_df['text'].values, stackoverflow_df['title'].values])
+y = ['dialogue'] * dialogue_df.shape[0] + ['stackoverflow'] * stackoverflow_df.shape[0]
 
-    # The third test: both candidates on the second position
-    candidates_ranking = [["How Can I Make These Links Rotate in PHP",
-                           "How does the catch keyword determine the type of exception that was thrown"],
-                          ["WPF- How to update the changes in list item of a list",
-                           "Convert Google results object (pure js) to Python object"]]
-    dup_ranks = [candidates_ranking[i].index(answers[i]) + 1 for i in range(len(answers))]
-    correct_answers = [0, 1 / (np.log2(3))]
-    for k, correct in enumerate(correct_answers, 1):
-        if not np.isclose(dcg_score(dup_ranks, k), correct):
-            return "Check the function (test: both candidates on the second position)."
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=0)
+print('Train size = {}, test size = {}'.format(len(X_train), len(X_test)))
 
-    return "Basic test are passed."
+X_train_tfidf, X_test_tfidf = tfidf_features(X_train, X_test, RESOURCE_PATH['TFIDF_VECTORIZER'])
 
-print(test_dcg())
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
 
-test_examples = [
-    [1],
-    [1, 2],
-    [2, 1],
-    [1, 2, 3],
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    [9, 5, 4, 2, 8, 10, 7, 6, 1, 3],
-    [4, 3, 5, 1, 9, 10, 7, 8, 2, 6],
-    [5, 1, 7, 6, 2, 3, 8, 9, 10, 4],
-    [6, 3, 1, 4, 7, 2, 9, 8, 10, 5],
-    [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-]
+intent_recognizer = LogisticRegression(penalty='l2', C=10, random_state=0).fit(X_train_tfidf, y_train)
 
-hits_results = []
-for example in test_examples:
-    for k in range(len(example)):
-        hits_results.append(hits_count(example, k + 1))
-grader.submit_tag('HitsCount', array_to_string(hits_results))
+# Check test accuracy.
+y_test_pred = intent_recognizer.predict(X_test_tfidf)
+test_accuracy = accuracy_score(y_test, y_test_pred)
+print('Test accuracy = {}'.format(test_accuracy))
 
+pickle.dump(intent_recognizer, open(RESOURCE_PATH['INTENT_RECOGNIZER'], 'wb'))
 
-dcg_results = []
-for example in test_examples:
-    for k in range(len(example)):
-        dcg_results.append(dcg_score(example, k + 1))
-grader.submit_tag('DCGScore', array_to_string(dcg_results))
+X = stackoverflow_df['title'].values
+y = stackoverflow_df['tag'].values
 
-def read_corpus(filename):
-    data = []
-    for line in open(filename, encoding='utf-8'):
-        data.append(line.strip().split('\t'))
-    return data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+print('Train size = {}, test size = {}'.format(len(X_train), len(X_test)))
 
-validation = read_corpus('data/validation.tsv')
+vectorizer = pickle.load(open(RESOURCE_PATH['TFIDF_VECTORIZER'], 'rb'))
 
-from sklearn.metrics.pairwise import cosine_similarity
+X_train_tfidf, X_test_tfidf = vectorizer.transform(X_train), vectorizer.transform(X_test)
 
+from sklearn.multiclass import OneVsRestClassifier
 
-def rank_candidates(question, candidates, embeddings, dim=300):
-    """
-        question: a string
-        candidates: a list of strings (candidates) which we want to rank
-        embeddings: some embeddings
-        dim: dimension of the current embeddings
+tag_classifier = OneVsRestClassifier(LogisticRegression(penalty='l2', C=5, random_state=0)).fit(X_train_tfidf,
+                                                                                                y_train)
 
-        result: a list of pairs (initial position in the list, question)
-    """
+# Check test accuracy.
+y_test_pred = tag_classifier.predict(X_test_tfidf)
+test_accuracy = accuracy_score(y_test, y_test_pred)
+print('Test accuracy = {}'.format(test_accuracy))
 
-    vecq = np.array([np.array(question_to_vec(question, embeddings, dim))])
-    vecc = np.array([np.array(question_to_vec(can, embeddings, dim)) for can in candidates])
-    scores = list(cosine_similarity(vecq, vecc)[0])
-    tl = [(i, candidates[i], scores[i]) for i in range(len(candidates))]
-    stl = sorted(tl, key=lambda x: x[2], reverse=True)
-    return [(t[0], t[1]) for t in stl]
+pickle.dump(tag_classifier, open(RESOURCE_PATH['TAG_CLASSIFIER'], 'wb'))
 
+starspace_embeddings, embeddings_dim = load_embeddings('data/word_embeddings.tsv')
 
-def test_rank_candidates():
-    questions = ['converting string to list', 'Sending array via Ajax fails']
-    candidates = [['Convert Google results object (pure js) to Python object',
-                   'C# create cookie from string and send it',
-                   'How to use jQuery AJAX for an outside domain?'],
-                  ['Getting all list items of an unordered list in PHP',
-                   'WPF- How to update the changes in list item of a list',
-                   'select2 not displaying search results']]
-    results = [[(1, 'C# create cookie from string and send it'),
-                (0, 'Convert Google results object (pure js) to Python object'),
-                (2, 'How to use jQuery AJAX for an outside domain?')],
-               [(0, 'Getting all list items of an unordered list in PHP'),
-                (2, 'select2 not displaying search results'),
-                (1, 'WPF- How to update the changes in list item of a list')]]
-    for question, q_candidates, result in zip(questions, candidates, results):
-        ranks = rank_candidates(question, q_candidates, wv_embeddings, 300)
-        if not np.all(ranks == result):
-            return "Check the function."
-    return "Basic tests are passed."
+posts_df = pd.read_csv('data/tagged_posts.tsv', sep='\t')
 
-print(test_rank_candidates())
+counts_by_tag = posts_df[['tag', 'post_id']].groupby(['tag', ]).count().to_dict()['post_id']
 
-wv_ranking = []
-for line in validation:
-    q, *ex = line
-    ranks = rank_candidates(q, ex, wv_embeddings)
-    wv_ranking.append([r[0] for r in ranks].index(0) + 1)
+import os
 
-for k in [1, 5, 10, 100, 500, 1000]:
-    print("DCG@%4d: %.3f | Hits@%4d: %.3f" % (k, dcg_score(wv_ranking, k), k, hits_count(wv_ranking, k)))
+os.makedirs(RESOURCE_PATH['THREAD_EMBEDDINGS_FOLDER'], exist_ok=True)
 
-for line in validation[:3]:
-    q, *examples = line
-    print(q, *examples[:3])
+for tag, count in counts_by_tag.items():
+    tag_posts = posts_df[posts_df['tag'] == tag]
 
-from util import text_prepare
+    tag_post_ids = tag_posts.post_id.tolist()
 
-prepared_validation = []
-for line in validation:
-    q, *ex = line
-    q = text_prepare(q)
-    for i,e in enumerate(ex):
-        ex[i] = text_prepare(e)
-    prepared_validation.append([q,*ex])
+    tag_vectors = np.zeros((count, embeddings_dim), dtype=np.float32)
+    for i, title in enumerate(tag_posts['title']):
+        tag_vectors[i, :] = question_to_vec(title, starspace_embeddings, embeddings_dim)
 
-wv_prepared_ranking = []
-for line in prepared_validation:
-    q, *ex = line
-    ranks = rank_candidates(q, ex, wv_embeddings)
-    wv_prepared_ranking.append([r[0] for r in ranks].index(0) + 1)
-
-for k in [1, 5, 10, 100, 500, 1000]:
-    print("DCG@%4d: %.3f | Hits@%4d: %.3f" % (k, dcg_score(wv_prepared_ranking, k),
-                                              k, hits_count(wv_prepared_ranking, k)))
-
-def prepare_file(in_, out_):
-    out = open(out_, 'w')
-    for line in open(in_, encoding='utf8'):
-        line = line.strip().split('\t')
-        new_line = [text_prepare(q) for q in line]
-        print(*new_line, sep='\t', file=out)
-    out.close()
-
-prepare_file('./data/validation.tsv', './data/tp_v.tsv')
-prepare_file('./data/test.tsv', './data/tp_t.tsv')
-prepare_file('./data/train.tsv', './data/tp_train.tsv')
-
-from util import matrix_to_string
-
-w2v_ranks_results = []
-prepared_test_data = './data/tp_t.tsv'
-for line in open(prepared_test_data):
-    q, *ex = line.strip().split('\t')
-    ranks = rank_candidates(q, ex, wv_embeddings, 300)
-    ranked_candidates = [r[0] for r in ranks]
-    w2v_ranks_results.append([ranked_candidates.index(i) + 1 for i in range(len(ranked_candidates))])
-
-grader.submit_tag('W2VTokenizedRanks', matrix_to_string(w2v_ranks_results))
-
-starspace_embeddings = {}
-for line in open('./data/sodd.tsv'):
-    word,*vec = line.strip().split()
-    vf = []
-    for v in vec:
-        # print(v)
-        vf.append(float(v))
-    starspace_embeddings[word] = np.array(vf)
-
-ss_prepared_ranking = []
-for line in prepared_validation:
-    q, *ex = line
-    ranks = rank_candidates(q, ex, starspace_embeddings, 100)
-    ss_prepared_ranking.append([r[0] for r in ranks].index(0) + 1)
-
-for k in [1, 5, 10, 100, 500, 1000]:
-    print("DCG@%4d: %.3f | Hits@%4d: %.3f" % (k, dcg_score(ss_prepared_ranking, k),
-                                               k, hits_count(ss_prepared_ranking, k)))
-
-starspace_ranks_results = []
-prepared_test_data = './data/tp_t.tsv'
-for line in open(prepared_test_data):
-    q, *ex = line.strip().split('\t')
-    ranks = rank_candidates(q, ex, starspace_embeddings, 100)
-    ranked_candidates = [r[0] for r in ranks]
-    starspace_ranks_results.append([ranked_candidates.index(i) + 1 for i in range(len(ranked_candidates))])
-
-grader.submit_tag('StarSpaceRanks', matrix_to_string(starspace_ranks_results))
-
+    # Dump post ids and vectors to a file.
+    filename = os.path.join(RESOURCE_PATH['THREAD_EMBEDDINGS_FOLDER'], os.path.normpath('%s.pkl' % tag))
+    pickle.dump((tag_post_ids, tag_vectors), open(filename, 'wb'))
